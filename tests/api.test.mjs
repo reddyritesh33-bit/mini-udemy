@@ -195,7 +195,7 @@ const s4id = (await pool.query(`SELECT user_id FROM users WHERE email='student4@
 const ashaId = (await pool.query(`SELECT user_id FROM users WHERE email='asha@miniudemy.test'`)).rows[0].user_id;
 const adminId = (await pool.query(`SELECT user_id FROM users WHERE email='admin@miniudemy.test'`)).rows[0].user_id;
 r = await call('/api/admin/users', { cookie: admin });
-rec(r.status === 200 && r.data.users.length >= 23, 'Admin lists users', `${r.data?.users?.length}`);
+rec(r.status === 200 && r.data.users.filter(u => u.email.endsWith('@miniudemy.test')).length === 12, 'Admin lists the 12 demo users', `${r.data?.users?.length}`);
 r = await call('/api/admin/users?q=asha', { cookie: admin });
 rec(r.data.users.length === 1 && r.data.users[0].teaches === 5, 'User search shows courses taught', JSON.stringify(r.data.users[0]));
 rec((await call('/api/admin/users', { cookie: s1 })).status === 403, 'User list: student 403');
@@ -270,7 +270,7 @@ const insightCourses = (await pool.query('SELECT course_id FROM courses ORDER BY
 // Earlier tests complete lessons in some courses without opening them; only check the seeded pattern in the others.
 const untouched = (await pool.query(`SELECT DISTINCT m.course_id FROM lesson_progress lp JOIN lessons l ON l.lesson_id = lp.lesson_id
   JOIN modules m ON m.module_id = l.module_id JOIN users u ON u.user_id = lp.user_id
-  WHERE u.email IN ('student1@miniudemy.test','student2@miniudemy.test','student3@miniudemy.test','student4@miniudemy.test','student5@miniudemy.test')`)).rows.map(x => x.course_id);
+  WHERE u.email IN ('student1@miniudemy.test','student2@miniudemy.test','student3@miniudemy.test','student4@miniudemy.test')`)).rows.map(x => x.course_id);
 const seededOnly = insightCourses.filter(c => !untouched.includes(c));
 let stalledSeen = 0, atRiskSeen = 0, insightOk = true;
 for (const cid of insightCourses) {

@@ -1,6 +1,7 @@
-// Seeds demo data: 1 admin, 2 instructors, 20 students, 10 courses (2 modules x 3 lessons each),
+// Seeds demo data: 1 admin, 2 instructors, 9 students, 10 courses (2 modules x 3 lessons each),
 // one preview document per course, and demo activity so reports are not empty.
-// Students 1-5 stay untouched for the live demo. Student 20 is reserved for the concurrency test.
+// Students 1-4 stay untouched for the live demo and tests. Students 5-8 hold the demo activity.
+// Student 9 is reserved for the concurrency test.
 // For local development only.
 // Run after: schema.sql loaded and `npm run setup:mongo`.
 import bcrypt from "bcryptjs";
@@ -30,8 +31,10 @@ const instructors = [
   await addUser("Asha Rao", "asha@miniudemy.test", "instructor"),
   await addUser("Vikram Nair", "vikram@miniudemy.test", "instructor"),
 ];
+// Earlier versions seeded students 10-20; remove them (their enrolments, progress and reviews cascade).
+await pool.query("DELETE FROM users WHERE email ~ '^student(1[0-9]|20)@miniudemy[.]test$'");
 const studentIds = [];
-for (let i = 1; i <= 20; i++) {
+for (let i = 1; i <= 9; i++) {
   studentIds.push(await addUser(`Student ${i}`, `student${i}@miniudemy.test`, "student"));
 }
 
@@ -140,8 +143,9 @@ for (const [i, [title, description, catIdx, level, tags, videoId]] of courses.en
 // In each course one student finishes it and leaves a review; the other stops partway through
 // (a stalled lesson) and has been quiet for 3 weeks (an at-risk learner). A few guests watch the
 // preview without enrolling. Fixed pattern, no randomness, so the numbers are the same on every run.
-// Students 6-19 hold this activity; anything seeded for them before is removed first.
-const learners = studentIds.slice(5, 19);
+// Students 5-8 hold this activity: 5 and 6 in Asha's courses, 7 and 8 in Vikram's.
+// Anything seeded for them before is removed first.
+const learners = studentIds.slice(4, 8);
 const ago = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 const events = [];
 await mdb.collection("activity_events").deleteMany({ seeded: true });
@@ -161,7 +165,7 @@ for (const [i, courseId] of courseIds.entries()) {
     [courseId]
   );
   const stall = 2 + (i % 3); // lessons the second student completed before stopping
-  const pair = [learners[(2 * i) % learners.length], learners[(2 * i + 1) % learners.length]];
+  const pair = i % 2 === 0 ? [learners[0], learners[1]] : [learners[2], learners[3]]; // [finishes, gets stuck]
 
   for (const [j, userId] of pair.entries()) {
     const finished = j === 0;

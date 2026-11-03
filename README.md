@@ -21,7 +21,7 @@ Mini-Udemy keeps records that must always be correct in PostgreSQL, enforced by 
 | **Guest** | Browse the catalogue, search by keyword, filter by category and level, watch a course's preview video, read reviews |
 | **Student** | Register, enrol, open a lesson to watch its video, mark it complete, track progress in My Learning, review a course after finishing at least 50% of it |
 | **Instructor** | See their courses' enrolments, average progress and ratings; publish a new course with its modules and lessons; edit its preview video; delete a course nobody is enrolled in; see learner insights |
-| **Admin** | Everything an instructor sees for all courses, plus 7 SQL reports and a watch-time report as tables and charts, and user management (search users, change roles) |
+| **Admin** | Everything an instructor sees for all courses, plus 7 SQL reports and a watch-time report (pick one at a time, with a plain explanation, a chart where useful, the table and its SQL), and user management (search users, change roles) |
 
 ### What makes it different
 
@@ -127,9 +127,9 @@ All seeded accounts use the development-only password `Password123!`.
 |---|---|
 | Admin | `admin@miniudemy.test` |
 | Instructor | `asha@miniudemy.test`, `vikram@miniudemy.test` |
-| Student | `student1@miniudemy.test` to `student20@miniudemy.test` |
+| Student | `student1@miniudemy.test` to `student9@miniudemy.test` |
 
-Students 1 to 5 start with no activity, for live demos. Students 6 to 19 hold the generated activity: each course has two of them, one who finished it and one who stalled partway and went quiet (an at-risk learner). Student 20 is reserved for the concurrency test.
+Students 1 to 4 start with no activity, for live demos and the tests. Students 5 to 8 hold the generated activity: in Asha's courses student 5 finished and student 6 stalled partway and went quiet (an at-risk learner); in Vikram's courses the same for students 7 and 8. Student 9 is reserved for the concurrency test.
 
 ## Testing
 
@@ -138,8 +138,8 @@ The test suites write and delete data, so they run against **separate test datab
 | Command | What it checks |
 |---|---|
 | `npm run test:db` | 34 database checks: constraints, triggers, functions, view, transaction rollback, 20 simultaneous enrolments, simultaneous last lessons (with a control run that shows the row lock is needed), the 7 reports, the GIN index, MongoDB validation and aggregation, and the three insight queries. Reloads `schema.sql` itself. |
-| `npm run test:api` | 114 API checks against the running app: every route, wrong-role access, reviews and the 50% rule, lesson video access, the publish transaction (including a failure on the last lesson), course delete across both databases, insights, reports and user management |
-| `python tests/browser_test.py` | 29 browser checks as guest, student, instructor and admin, including lesson videos (needs `pip install playwright` and `playwright install chromium`) |
+| `npm run test:api` | 116 API checks against the running app: every route, wrong-role access, reviews and the 50% rule, lesson video access, the publish transaction (including a failure on the last lesson), course delete across both databases, insights, reports and user management |
+| `python tests/browser_test.py` | 32 browser checks as guest, student, instructor and admin, including lesson videos (needs `pip install playwright` and `playwright install chromium`) |
 | `npm run test:concurrency` | 20 parallel enrolment requests through the app produce exactly one row |
 
 For the API and browser tests, load `schema.sql` into the test database, run `npm run setup:mongo` and `npm run seed` against it, and start the app with the same database settings as `.env.test`.
