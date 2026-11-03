@@ -1,4 +1,4 @@
-# Mini-Udemy
+# Mini-Udemy 
 
 A learning platform where **PostgreSQL guarantees student progress** and **MongoDB records learner behaviour**, so instructors can see where students get stuck.
 
