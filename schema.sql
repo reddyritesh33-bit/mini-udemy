@@ -1,4 +1,4 @@
--- Mini-Udemy PostgreSQL schema (from Appendix A of the Project Report).
+-- Mini-Udemy PostgreSQL schema.
 -- Load with: psql "$DATABASE_URL" -f schema.sql
 DROP VIEW IF EXISTS v_student_progress;
 DROP TABLE IF EXISTS reviews, lesson_progress, enrollments, lessons, modules, courses, categories, users CASCADE;

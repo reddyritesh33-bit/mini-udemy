@@ -19,7 +19,7 @@ Mini-Udemy keeps records that must always be correct in PostgreSQL, enforced by 
 | Role | What they can do |
 |---|---|
 | **Guest** | Browse the catalogue, search by keyword, filter by category and level, watch a course's preview video, read reviews |
-| **Student** | Register, enrol, open lessons and mark them complete, track progress in My Learning, review a course after finishing at least 50% of it |
+| **Student** | Register, enrol, open a lesson to watch its video, mark it complete, track progress in My Learning, review a course after finishing at least 50% of it |
 | **Instructor** | See their courses' enrolments, average progress and ratings; publish a new course with its modules and lessons; edit its preview video; delete a course nobody is enrolled in; see learner insights |
 | **Admin** | Everything an instructor sees for all courses, plus 7 SQL reports and a watch-time report as tables and charts, and user management (search users, change roles) |
 
@@ -38,7 +38,7 @@ Mini-Udemy keeps records that must always be correct in PostgreSQL, enforced by 
 flowchart LR
   B[Browser<br/>guest, student,<br/>instructor, admin] --> N[Next.js<br/>pages and Route Handlers<br/>JWT and role checks]
   N -- parameterised SQL<br/>connection pool --> P[(PostgreSQL<br/>users, courses, enrolments,<br/>progress, reviews)]
-  N -- driver, aggregation --> M[(MongoDB<br/>course previews,<br/>activity events)]
+  N -- driver, aggregation --> M[(MongoDB<br/>course previews, lesson videos,<br/>activity events)]
   B -. streams preview .-> Y[External video host]
 ```
 
@@ -75,14 +75,15 @@ erDiagram
 
 The full schema is in [`schema.sql`](schema.sql). It includes `CREATE`, `ALTER` and `DROP`.
 
-### MongoDB: 2 collections
+### MongoDB: 3 collections
 
 | Collection | Contents | Why MongoDB |
 |---|---|---|
 | `course_previews` | One document per course: video link, tags, what you will learn | Fields and list lengths differ by course; read whole by `course_id`; checked by a `$jsonSchema` validator |
+| `lesson_videos` | One document per lesson: video link and the second it starts from | Content, not a record that must be correct; read by `lesson_id` when a lesson is opened; validated, one per lesson. PostgreSQL decides who may watch (enrolled student, owning instructor or admin) |
 | `activity_events` | Preview plays, lesson opens, pauses and completions with watch time | Many small append-only records whose fields vary by type; summarised with aggregation pipelines |
 
-Before an event is stored, the API checks in PostgreSQL that the course exists and that the lesson belongs to it. Video files are stored in neither database; only the link is kept.
+Before an event is stored, the API checks in PostgreSQL that the course exists and that the lesson belongs to it. Video files are stored in neither database; only the link is kept. Each course's lessons play one full-length public tutorial on its topic, each lesson starting at a different point in it.
 
 ## Getting started
 
@@ -113,8 +114,8 @@ Or with a local PostgreSQL: `psql "$DATABASE_URL" -f schema.sql`. Loading `schem
 Then set up MongoDB, add demo data and start the app:
 
 ```bash
-npm run setup:mongo    # collections, validator and indexes
-npm run seed           # demo users, 10 courses, previews and activity (safe to run again)
+npm run setup:mongo    # collections, validators and indexes
+npm run seed           # demo users, 10 courses, previews, lesson videos and activity (safe to run again)
 npm run dev            # http://localhost:3000
 ```
 
@@ -137,8 +138,8 @@ The test suites write and delete data, so they run against **separate test datab
 | Command | What it checks |
 |---|---|
 | `npm run test:db` | 34 database checks: constraints, triggers, functions, view, transaction rollback, 20 simultaneous enrolments, simultaneous last lessons (with a control run that shows the row lock is needed), the 7 reports, the GIN index, MongoDB validation and aggregation, and the three insight queries. Reloads `schema.sql` itself. |
-| `npm run test:api` | 104 API checks against the running app: every route, wrong-role access, reviews and the 50% rule, the publish transaction (including a failure on the last lesson), course delete across both databases, insights, reports and user management |
-| `python tests/browser_test.py` | 27 browser checks as guest, student, instructor and admin (needs `pip install playwright` and `playwright install chromium`) |
+| `npm run test:api` | 114 API checks against the running app: every route, wrong-role access, reviews and the 50% rule, lesson video access, the publish transaction (including a failure on the last lesson), course delete across both databases, insights, reports and user management |
+| `python tests/browser_test.py` | 29 browser checks as guest, student, instructor and admin, including lesson videos (needs `pip install playwright` and `playwright install chromium`) |
 | `npm run test:concurrency` | 20 parallel enrolment requests through the app produce exactly one row |
 
 For the API and browser tests, load `schema.sql` into the test database, run `npm run setup:mongo` and `npm run seed` against it, and start the app with the same database settings as `.env.test`.
@@ -156,6 +157,7 @@ For the API and browser tests, load `schema.sql` into the test database, run `np
 | GET, POST, PUT, DELETE | `/api/courses/:id/reviews` | anyone reads; student writes; admin removes | Reviews with the 50% rule |
 | GET, PUT | `/api/courses/:id/preview` | anyone reads; owning instructor or admin edits | Preview video (MongoDB) |
 | POST | `/api/lessons/:id/complete` | student | Complete a lesson |
+| GET | `/api/lessons/:id/video` | enrolled student, owning instructor, admin | The lesson's video (MongoDB) |
 | GET | `/api/me/learning` | student | Progress in every enrolled course |
 | POST | `/api/events` | anyone for preview plays; logged in for lesson events | Record activity |
 | GET, POST | `/api/instructor/courses` | instructor (admin reads all) | Course figures; publish a course |
@@ -165,11 +167,11 @@ For the API and browser tests, load `schema.sql` into the test database, run `np
 
 ## Known limitations
 
-- Lessons have no video content yet, so watch time measures how long a lesson stayed open.
+- Lesson videos are embedded from YouTube, so the app cannot see playback; watch time measures how long a lesson stayed open.
 - The page requires a student to open a lesson before marking it complete, but a direct API call does not.
 - Preview conversion links logged-in viewers only, so it is a lower estimate.
 - Deleting a course removes its MongoDB documents after the PostgreSQL delete; there is no shared transaction, so a failed cleanup leaves orphan documents, which reports ignore.
-- The demo data is generated, not real student behaviour. Preview videos are public tutorials by other creators, linked rather than hosted.
+- The demo data is generated, not real student behaviour. Preview and lesson videos are public tutorials by other creators (mostly freeCodeCamp), linked rather than hosted.
 
 ## Team
 

@@ -1,16 +1,18 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
-// Turn a YouTube watch/short link into an embeddable URL. Returns null for other hosts.
-function toEmbedUrl(url) {
+// Turn a YouTube watch/short link into an embeddable URL, optionally starting at a given second.
+// Returns null for other hosts.
+function toEmbedUrl(url, start = 0) {
   try {
     const u = new URL(url);
     let id = null;
     if (u.hostname.endsWith("youtube.com")) id = u.searchParams.get("v");
     else if (u.hostname === "youtu.be") id = u.pathname.slice(1);
-    return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1` : null;
+    const from = start > 0 ? `&start=${Math.floor(start)}` : "";
+    return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1${from}` : null;
   } catch {
     return null;
   }
@@ -44,6 +46,7 @@ export default function CoursePage() {
   const [progress, setProgress] = useState(0);
   const [opened, setOpened] = useState(null); // lesson id currently open
   const openedAt = useRef(0); // when it was opened, to measure watch time
+  const [lessonVideo, setLessonVideo] = useState(null); // { lessonId, embed } or { lessonId, note }
   const [reviews, setReviews] = useState({ reviews: [], average: null, count: 0 });
   const [form, setForm] = useState({ rating: 5, comment: "" });
   const [editing, setEditing] = useState(false);
@@ -98,13 +101,26 @@ export default function CoursePage() {
       watch_seconds: Math.round((Date.now() - openedAt.current) / 1000),
     });
     setOpened(null);
+    setLessonVideo(null);
   }
 
   function openLesson(lessonId) {
     if (opened) closeLesson("pause");
     openedAt.current = Date.now();
     setOpened(lessonId);
+    setLessonVideo({ lessonId, note: "Loading video..." });
     sendEvent({ event_type: "lesson_open", lesson_id: lessonId });
+
+    // The video link lives in MongoDB; the lesson still works if it is missing.
+    fetch(`/api/lessons/${lessonId}/video`)
+      .then((r) => r.json())
+      .then((d) => {
+        const embed = d.video ? toEmbedUrl(d.video.video_url, d.video.start_seconds) : null;
+        setLessonVideo((cur) =>
+          cur?.lessonId !== lessonId ? cur : embed ? { lessonId, embed } : { lessonId, note: "No video for this lesson yet." }
+        );
+      })
+      .catch(() => setLessonVideo((cur) => (cur?.lessonId === lessonId ? { lessonId, note: "Video unavailable." } : cur)));
   }
 
   async function completeLesson(lessonId) {
@@ -261,8 +277,10 @@ export default function CoursePage() {
             <ul style={{ marginTop: 4, listStyle: "none", paddingLeft: 0 }}>
               {m.lessons.map((l) => {
                 const done = completed.includes(l.lesson_id);
+                const video = opened === l.lesson_id && lessonVideo?.lessonId === l.lesson_id ? lessonVideo : null;
                 return (
-                  <li key={l.lesson_id} style={{ padding: "4px 0", display: "flex", gap: 8, alignItems: "center" }}>
+                  <Fragment key={l.lesson_id}>
+                  <li style={{ padding: "4px 0", display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ width: 18 }}>{done ? "✓" : "○"}</span>
                     <span style={{ flex: 1 }}>
                       {l.title} <span style={{ color: "#888" }}>({l.duration_minutes} min)</span>
@@ -282,6 +300,25 @@ export default function CoursePage() {
                       </>
                     )}
                   </li>
+                  {video && (
+                    <li style={{ padding: "4px 0 12px 26px" }}>
+                      {video.embed ? (
+                        <iframe
+                          width="100%"
+                          height="400"
+                          src={video.embed}
+                          title={`${l.title} video`}
+                          allow="autoplay; encrypted-media"
+                          allowFullScreen
+                          style={{ border: 0, borderRadius: 8 }}
+                        />
+                      ) : (
+                        <p style={{ color: "#666", margin: 0 }}>{video.note}</p>
+                      )}
+                      <button onClick={() => closeLesson("pause")} style={{ marginTop: 6 }}>Close video</button>
+                    </li>
+                  )}
+                  </Fragment>
                 );
               })}
             </ul>

@@ -125,6 +125,7 @@ export async function DELETE(_request, { params }) {
   try {
     const db = await getMongoDb();
     await db.collection("course_previews").deleteMany({ course_id: courseId });
+    await db.collection("lesson_videos").deleteMany({ course_id: courseId });
     await db.collection("activity_events").deleteMany({ course_id: courseId });
   } catch (err) {
     console.error("mongo cleanup failed:", err.message);

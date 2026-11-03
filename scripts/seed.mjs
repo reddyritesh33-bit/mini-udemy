@@ -59,6 +59,21 @@ const courses = [
   ["Authentication and Security", "Hashing, JWT sessions and role checks.", 1, "advanced", ["jwt", "security"], "7Q17ubqLfaM"],
 ];
 
+// Lesson videos: one full-length public tutorial per course (same order as `courses`), with its length
+// in seconds. Each of a course's 6 lessons starts at a different point in it. Only links are stored.
+const lessonVideos = [
+  ["HXV3zeQKqGY", 15639], // freeCodeCamp: SQL Tutorial, Full Database Course for Beginners
+  ["qw--VYLpxG4", 15574], // freeCodeCamp: Learn PostgreSQL, Full Course for Beginners
+  ["c2M-rlkkT5o", 3600], // Bro Code: Learn MongoDB in 1 hour
+  ["ZVnjOPwW4ZA", 3775], // Programming with Mosh: Next.js Tutorial for Beginners
+  ["WXsD0ZgxjRw", 11226], // freeCodeCamp: APIs for Beginners, Full Course
+  ["PkZNo7MFNFg", 12403], // freeCodeCamp: Learn JavaScript, Full Course for Beginners
+  ["r-uOLxNrNk8", 15733], // freeCodeCamp: Data Analysis with Python, Full Course
+  ["i_LwzRVP7bg", 14033], // freeCodeCamp: Machine Learning for Everybody, Full Course
+  ["ztHopE5Wnpc", 29240], // freeCodeCamp: Database Design Course
+  ["F-sFp_AvHc8", 22408], // freeCodeCamp: User Authentication in Web Apps
+];
+
 const courseIds = [];
 for (const [i, [title, description, catIdx, level, tags, videoId]] of courses.entries()) {
   const instructor = instructors[i % 2];
@@ -86,6 +101,25 @@ for (const [i, [title, description, catIdx, level, tags, videoId]] of courses.en
         [mod.rows[0].module_id, `Lesson ${m}.${l}`, 8 + l * 2, l]
       );
     }
+  }
+
+  const { rows: courseLessons } = await pool.query(
+    `SELECT l.lesson_id FROM lessons l JOIN modules m ON m.module_id = l.module_id
+     WHERE m.course_id = $1 ORDER BY m.position, l.position`,
+    [courseId]
+  );
+  const [lessonVideo, seconds] = lessonVideos[i];
+  for (const [k, { lesson_id }] of courseLessons.entries()) {
+    await mdb.collection("lesson_videos").replaceOne(
+      { lesson_id },
+      {
+        lesson_id,
+        course_id: courseId,
+        video_url: `https://www.youtube.com/watch?v=${lessonVideo}`,
+        start_seconds: Math.floor((k * seconds) / courseLessons.length),
+      },
+      { upsert: true }
+    );
   }
 
   await mdb.collection("course_previews").replaceOne(

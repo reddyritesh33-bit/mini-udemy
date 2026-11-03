@@ -163,6 +163,24 @@ rec((await call('/api/events', { method: 'POST', cookie: s3, body: { event_type:
 rec((await call('/api/events', { method: 'POST', cookie: s3, body: { event_type: 'pause', course_id: 3, lesson_id: l3[0], watch_seconds: 120 } })).status === 201, 'Valid pause event accepted');
 rec(await mdb.collection('activity_events').countDocuments({ watch_seconds: 999999999 }) === 0, 'No oversized event stored');
 
+// Lesson videos (MongoDB), access decided by PostgreSQL
+const totalLessons = (await pool.query('SELECT COUNT(*)::int n FROM lessons')).rows[0].n;
+rec(await mdb.collection('lesson_videos').countDocuments() === totalLessons, 'Every seeded lesson has a video', `${totalLessons} lessons`);
+rec((await call(`/api/lessons/${lessons[0]}/video`)).status === 401, 'Lesson video: guest 401');
+r = await call(`/api/lessons/${lessons[0]}/video`, { cookie: s2 });
+rec(r.status === 403, 'Lesson video: student not enrolled 403', r.data?.error);
+r = await call(`/api/lessons/${lessons[0]}/video`, { cookie: s1 });
+const v0 = r.data?.video;
+const v1 = (await call(`/api/lessons/${lessons[1]}/video`, { cookie: s1 })).data?.video;
+rec(r.status === 200 && /^https:\/\//.test(v0.video_url) && v0.start_seconds === 0, 'Lesson video: enrolled student gets the first lesson from the start', JSON.stringify(v0));
+rec(v1 && v1.video_url === v0.video_url && v1.start_seconds > 0, 'Next lesson starts later in the same course video', `${v1?.start_seconds}s`);
+rec((await call(`/api/lessons/${lessons[0]}/video`, { cookie: asha })).status === 200, 'Lesson video: owning instructor 200');
+rec((await call(`/api/lessons/${lessons[0]}/video`, { cookie: vikram })).status === 403, 'Lesson video: other instructor 403');
+rec((await call(`/api/lessons/${lessons[0]}/video`, { cookie: admin })).status === 200, 'Lesson video: admin 200');
+rec((await call('/api/lessons/999999/video', { cookie: admin })).status === 404, 'Lesson video: missing lesson 404');
+try { await mdb.collection('lesson_videos').insertOne({ lesson_id: 999998, course_id: 1, video_url: 'http://bad', start_seconds: 0 }); rec(false, 'lesson_videos validator rejects a non-https link'); }
+catch (e) { rec(e.code === 121, 'lesson_videos validator rejects a non-https link', `code ${e.code}`); }
+
 // Reports
 rec((await call('/api/admin/reports/watch-time', { cookie: s1 })).status === 403, 'Watch-time: student 403');
 rec((await call('/api/admin/reports/watch-time')).status === 401, 'Watch-time: guest 401');
@@ -231,13 +249,15 @@ rec(r.status === 400 && JSON.stringify(c2) === JSON.stringify(c1) && (await pool
 // Deleting a course across both databases
 await call(`/api/courses/${newId}/preview`, { method: 'PUT', cookie: asha, body: { video_url: 'https://www.youtube.com/watch?v=x' } });
 await call('/api/events', { method: 'POST', body: { event_type: 'preview_play', course_id: newId, session_id: 'del' } });
+await mdb.collection('lesson_videos').insertOne({ lesson_id: 999997, course_id: newId, video_url: 'https://www.youtube.com/watch?v=x', start_seconds: 0 });
 rec((await call(`/api/courses/${newId}`, { method: 'DELETE', cookie: vikram })).status === 403, 'Delete: other instructor 403');
 rec((await call(`/api/courses/${newId}`, { method: 'DELETE', cookie: s1 })).status === 403, 'Delete: student 403');
 r = await call('/api/courses/1', { method: 'DELETE', cookie: asha });
 rec(r.status === 409 && (await pool.query('SELECT 1 FROM courses WHERE course_id=1')).rowCount === 1, 'Course with enrolled students cannot be deleted (RESTRICT)', r.data?.error);
 r = await call(`/api/courses/${newId}`, { method: 'DELETE', cookie: asha });
 const left = await pool.query('SELECT (SELECT COUNT(*) FROM modules WHERE course_id=$1)::int m', [newId]);
-const mongoLeft = await mdb.collection('course_previews').countDocuments({ course_id: newId }) + await mdb.collection('activity_events').countDocuments({ course_id: newId });
+const mongoLeft = await mdb.collection('course_previews').countDocuments({ course_id: newId }) + await mdb.collection('activity_events').countDocuments({ course_id: newId })
+  + await mdb.collection('lesson_videos').countDocuments({ course_id: newId });
 rec(r.status === 200 && r.data.mongo_cleaned && left.rows[0].m === 0 && mongoLeft === 0, 'Delete removes PostgreSQL rows and MongoDB documents', `modules ${left.rows[0].m}, mongo ${mongoLeft}`);
 rec((await call(`/api/courses/${newId}`)).status === 404, 'Deleted course gives 404');
 
