@@ -136,13 +136,22 @@ for (const [i, [title, description, catIdx, level, tags, videoId]] of courses.en
   );
 }
 
-// Demo activity. Fixed pattern, no randomness, so the report numbers stay the same on every run.
-// In each course, one learner in three finishes and the rest stop at a "stall" lesson.
+// Demo activity: two students per course, so every insight is short and easy to read.
+// In each course one student finishes it and leaves a review; the other stops partway through
+// (a stalled lesson) and has been quiet for 3 weeks (an at-risk learner). A few guests watch the
+// preview without enrolling. Fixed pattern, no randomness, so the numbers are the same on every run.
+// Students 6-19 hold this activity; anything seeded for them before is removed first.
 const learners = studentIds.slice(5, 19);
 const ago = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 const events = [];
 await mdb.collection("activity_events").deleteMany({ seeded: true });
+await pool.query("DELETE FROM reviews WHERE user_id = ANY($1)", [learners]);
+await pool.query("DELETE FROM lesson_progress WHERE user_id = ANY($1)", [learners]);
+await pool.query("DELETE FROM enrollments WHERE user_id = ANY($1)", [learners]);
 
+let enrolments = 0;
+let completions = 0;
+let reviews = 0;
 for (const [i, courseId] of courseIds.entries()) {
   const { rows: lessons } = await pool.query(
     `SELECT l.lesson_id, l.duration_minutes
@@ -151,57 +160,53 @@ for (const [i, courseId] of courseIds.entries()) {
      ORDER BY m.position, l.position`,
     [courseId]
   );
-  const stall = 2 + (i % 3); // lesson index where most learners stop
-  const count = 6 + ((i * 3) % 9);
+  const stall = 2 + (i % 3); // lessons the second student completed before stopping
+  const pair = [learners[(2 * i) % learners.length], learners[(2 * i + 1) % learners.length]];
 
-  for (let j = 0; j < count; j++) {
-    const userId = learners[(i * 5 + j) % learners.length];
-    const finished = j % 3 === 0;
-    const quiet = !finished && j % 2 === 1; // no activity for 18+ days: an at-risk learner
-    const enrolledAgo = 32 + ((i * 11 + j * 7) % 60);
-    const lastAgo = quiet ? 18 + (j % 12) : 1 + (j % 6);
+  for (const [j, userId] of pair.entries()) {
+    const finished = j === 0;
+    const enrolledAgo = 30 + i;
+    const lastAgo = finished ? 2 + (i % 4) : 21;
     const done = finished ? lessons.length : stall;
     const base = { user_id: userId, session_id: `seed-${i}-${j}`, course_id: courseId, seeded: true };
 
     await pool.query(
-      `INSERT INTO enrollments (user_id, course_id, enrolled_at) VALUES ($1,$2,$3)
-       ON CONFLICT (user_id, course_id) DO NOTHING`,
+      "INSERT INTO enrollments (user_id, course_id, enrolled_at) VALUES ($1, $2, $3)",
       [userId, courseId, ago(enrolledAgo)]
     );
+    enrolments++;
     events.push({ ...base, event_type: "preview_play", ts: ago(enrolledAgo + 1) });
 
     for (let k = 0; k < done; k++) {
       const when = ago(enrolledAgo - ((enrolledAgo - lastAgo) * (k + 1)) / (done + 1));
       const lesson = lessons[k];
       await pool.query(
-        `INSERT INTO lesson_progress (user_id, lesson_id, completed_at) VALUES ($1,$2,$3)
-         ON CONFLICT (user_id, lesson_id) DO NOTHING`,
+        "INSERT INTO lesson_progress (user_id, lesson_id, completed_at) VALUES ($1, $2, $3)",
         [userId, lesson.lesson_id, when]
       );
-      const watch_seconds = Math.round(lesson.duration_minutes * 60 * (0.8 + ((j + k) % 5) / 10));
+      completions++;
+      const watch_seconds = Math.round(lesson.duration_minutes * 60 * (0.8 + ((i + k) % 5) / 10));
       events.push({ ...base, lesson_id: lesson.lesson_id, event_type: "lesson_open", ts: when });
       events.push({ ...base, lesson_id: lesson.lesson_id, event_type: "ended", watch_seconds, ts: when });
     }
 
-    if (!finished) {
+    if (finished) {
+      // Past 50%, so the review trigger accepts it.
+      await pool.query(
+        "INSERT INTO reviews (user_id, course_id, rating, comment) VALUES ($1, $2, $3, $4)",
+        [userId, courseId, 4 + (i % 2), "Clear explanations and useful exercises."]
+      );
+      reviews++;
+    } else {
       const lesson = lessons[stall];
       const watch_seconds = Math.round(lesson.duration_minutes * 60 * 0.3);
       events.push({ ...base, lesson_id: lesson.lesson_id, event_type: "lesson_open", ts: ago(lastAgo) });
       events.push({ ...base, lesson_id: lesson.lesson_id, event_type: "pause", watch_seconds, ts: ago(lastAgo) });
     }
-
-    // Only learners past 50% can review; the trigger would reject anyone else.
-    if (j % 2 === 0 && done >= 3) {
-      await pool.query(
-        `INSERT INTO reviews (user_id, course_id, rating, comment) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (user_id, course_id) DO NOTHING`,
-        [userId, courseId, 3 + ((i + j) % 3), "Clear explanations and useful exercises."]
-      );
-    }
   }
 
   // Guests who watched the preview and did not enrol, for the conversion insight.
-  for (let g = 0; g < 3 + (i % 5); g++) {
+  for (let g = 0; g < 2; g++) {
     events.push({
       user_id: null,
       session_id: `seed-guest-${i}-${g}`,
@@ -214,6 +219,9 @@ for (const [i, courseId] of courseIds.entries()) {
 }
 await mdb.collection("activity_events").insertMany(events);
 
-console.log(`Seeded users (password for all: ${DEMO_PASSWORD}), ${courses.length} courses, previews and ${events.length} demo events.`);
+console.log(
+  `Seeded users (password for all: ${DEMO_PASSWORD}), ${courses.length} courses, previews, lesson videos, ` +
+    `${enrolments} enrolments, ${completions} completed lessons, ${reviews} reviews and ${events.length} demo events.`
+);
 await pool.end();
 await mongo.close();

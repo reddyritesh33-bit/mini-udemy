@@ -129,7 +129,7 @@ All seeded accounts use the development-only password `Password123!`.
 | Instructor | `asha@miniudemy.test`, `vikram@miniudemy.test` |
 | Student | `student1@miniudemy.test` to `student20@miniudemy.test` |
 
-Students 1 to 5 start with no activity, for live demos. Students 6 to 19 hold the generated activity used by the reports and insights. Student 20 is reserved for the concurrency test.
+Students 1 to 5 start with no activity, for live demos. Students 6 to 19 hold the generated activity: each course has two of them, one who finished it and one who stalled partway and went quiet (an at-risk learner). Student 20 is reserved for the concurrency test.
 
 ## Testing
 
@@ -161,7 +161,7 @@ For the API and browser tests, load `schema.sql` into the test database, run `np
 | GET | `/api/me/learning` | student | Progress in every enrolled course |
 | POST | `/api/events` | anyone for preview plays; logged in for lesson events | Record activity |
 | GET, POST | `/api/instructor/courses` | instructor (admin reads all) | Course figures; publish a course |
-| GET | `/api/insights` | instructor, admin | Stalled lessons, conversion, at-risk learners |
+| GET | `/api/insights?course_id=` | instructor (own courses), admin | One course's lessons (opened vs completed), preview conversion and students (at risk or not) |
 | GET | `/api/admin/reports`, `/api/admin/reports/watch-time` | admin | 7 SQL reports; MongoDB watch time |
 | GET, PATCH | `/api/admin/users`, `/api/admin/users/:id` | admin | List users; change a role |
 

@@ -265,13 +265,32 @@ rec((await call(`/api/courses/${newId}`)).status === 404, 'Deleted course gives 
 rec((await call('/api/insights')).status === 401, 'Insights: guest 401');
 rec((await call('/api/insights', { cookie: s1 })).status === 403, 'Insights: student 403');
 r = await call('/api/insights', { cookie: admin });
-rec(r.status === 200 && r.data.stalled.length > 0 && r.data.stalled.every(s => s.opened_by >= s.completed_by), 'Stall detector returns lessons opened more than completed', JSON.stringify(r.data.stalled[0]));
-rec(r.data.conversion.length === 10 && r.data.conversion.every(c => c.enrolled_viewers <= c.preview_sessions), 'Conversion for all 10 courses, never above 100%', JSON.stringify(r.data.conversion[0]));
-rec(r.data.at_risk.length > 0 && r.data.at_risk.every(a => a.days_quiet === null || a.days_quiet >= 14) && r.data.at_risk.every(a => a.completion_pct < 100), 'At-risk list: unfinished and quiet 14+ days', `${r.data.at_risk.length} learners`);
-const ashaTitles = (await pool.query(`SELECT title FROM courses c JOIN users u ON u.user_id=c.instructor_id WHERE u.email='asha@miniudemy.test'`)).rows.map(x => x.title);
+rec(r.status === 200 && r.data.courses.length === 10 && r.data.course, 'Admin can choose among all 10 courses');
+const insightCourses = (await pool.query('SELECT course_id FROM courses ORDER BY course_id')).rows.map(x => x.course_id);
+// Earlier tests complete lessons in some courses without opening them; only check the seeded pattern in the others.
+const untouched = (await pool.query(`SELECT DISTINCT m.course_id FROM lesson_progress lp JOIN lessons l ON l.lesson_id = lp.lesson_id
+  JOIN modules m ON m.module_id = l.module_id JOIN users u ON u.user_id = lp.user_id
+  WHERE u.email IN ('student1@miniudemy.test','student2@miniudemy.test','student3@miniudemy.test','student4@miniudemy.test','student5@miniudemy.test')`)).rows.map(x => x.course_id);
+const seededOnly = insightCourses.filter(c => !untouched.includes(c));
+let stalledSeen = 0, atRiskSeen = 0, insightOk = true;
+for (const cid of insightCourses) {
+  const d = (await call(`/api/insights?course_id=${cid}`, { cookie: admin })).data;
+  if (seededOnly.includes(cid)) stalledSeen += d.lessons.some(l => l.stalled) ? 1 : 0;
+  atRiskSeen += d.students.filter(s => s.at_risk).length;
+  insightOk &&= d.course.course_id === cid && d.lessons.length === 6
+    && d.lessons.every(l => l.stalled === (l.opened_by > l.completed_by))
+    && d.conversion.enrolled_viewers <= d.conversion.preview_sessions
+    && d.students.filter(s => s.at_risk).every(s => s.progress_pct < 100 && (s.days_since_activity === null || s.days_since_activity >= 14));
+}
+rec(insightOk, 'Each course: 6 lessons, stalled means opened more than completed, conversion at most 100%, at-risk means unfinished and quiet 14+ days');
+rec(seededOnly.length > 0 && stalledSeen === seededOnly.length && atRiskSeen >= 10, 'Demo data: every untouched course shows a stalled lesson; every course has an at-risk student', `${stalledSeen} of ${seededOnly.length} courses stalled, ${atRiskSeen} at risk`);
+const ashaCourses = (await pool.query(`SELECT c.course_id FROM courses c JOIN users u ON u.user_id=c.instructor_id WHERE u.email='asha@miniudemy.test'`)).rows.map(x => x.course_id);
+const vikramCourse = (await pool.query(`SELECT c.course_id FROM courses c JOIN users u ON u.user_id=c.instructor_id WHERE u.email='vikram@miniudemy.test' LIMIT 1`)).rows[0].course_id;
 r = await call('/api/insights', { cookie: asha });
-rec(r.status === 200 && [...r.data.stalled, ...r.data.conversion, ...r.data.at_risk].every(x => ashaTitles.includes(x.course)), 'Instructor insights only cover their own courses');
-info('Top stalled lesson', JSON.stringify(r.data.stalled[0]));
+rec(r.status === 200 && r.data.courses.length === ashaCourses.length && r.data.courses.every(c => ashaCourses.includes(c.course_id)), 'Instructor can only choose their own courses');
+rec((await call(`/api/insights?course_id=${vikramCourse}`, { cookie: asha })).status === 403, "Instructor asking for another instructor's course gets 403");
+rec((await call('/api/insights?course_id=abc', { cookie: asha })).status === 403, 'Bad course id rejected');
+info('Insights for one course', JSON.stringify((await call(`/api/insights?course_id=${ashaCourses[0]}`, { cookie: asha })).data.students));
 
 // Admin SQL reports
 rec((await call('/api/admin/reports', { cookie: s1 })).status === 403, 'SQL reports: student 403');
