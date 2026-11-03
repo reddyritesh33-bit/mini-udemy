@@ -1,0 +1,191 @@
+# Browser walkthrough as guest, student, instructor and admin, using the seeded accounts.
+# Needs: pip install playwright && playwright install chromium. Run against a freshly seeded TEST database:
+#   BASE_URL=http://localhost:3000 python tests/browser_test.py
+import json
+import os
+import time
+from playwright.sync_api import sync_playwright
+
+BASE = os.environ.get("BASE_URL", "http://localhost:3000")
+SHOTS = os.path.join(os.path.dirname(__file__), "screenshots")
+os.makedirs(SHOTS, exist_ok=True)
+PW = "Password123!"
+errors, results = [], []
+STAMP = str(int(time.time()))
+
+
+def say(ok, name, detail=""):
+    results.append({"ok": bool(ok), "name": name})
+    print("PASS" if ok else "FAIL", name, f"-> {detail}" if detail else "")
+
+
+def login(page, email):
+    page.goto(BASE + "/login")
+    page.fill('input[type=email]', email)
+    page.fill('input[type=password]', PW)
+    page.click('button[type=submit]')
+    page.wait_for_url(BASE + "/")
+    page.wait_for_selector("text=Log out")
+
+
+def complete_next(page):
+    """Open the first unfinished lesson, then mark it complete, as a student would."""
+    row = page.locator("li", has=page.locator("button:has-text('Mark complete')")).first
+    n = page.locator("button:has-text('Mark complete')").count()
+    row.locator("button:has-text('Open')").click()
+    row.locator("button:has-text('Mark complete')").click()
+    page.wait_for_function(f"[...document.querySelectorAll('button')].filter(b => b.textContent === 'Mark complete').length === {n - 1}")
+
+
+with sync_playwright() as p:
+    b = p.chromium.launch(channel=os.environ.get("BROWSER_CHANNEL") or None)
+    ctx = b.new_context(viewport={"width": 1100, "height": 800})
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("dialog", lambda d: d.accept())
+
+    # Guest
+    page.goto(BASE + "/")
+    page.wait_for_selector("h3")
+    say(page.locator("h3").count() == 10, "Catalogue shows 10 cards", str(page.locator("h3").count()))
+    page.fill("input", "database")
+    page.wait_for_function("document.querySelectorAll('h3').length === 1")
+    say(True, "Search narrows the list", page.locator("h3").first.inner_text())
+    page.screenshot(path=SHOTS + "/ui_catalogue.png")
+    page.click("h3")
+    page.wait_for_selector("text=Curriculum")
+    say(page.locator("button:has-text('Enroll')").count() == 1, "Guest sees Enroll button")
+    say(page.locator("text=Mark complete").count() == 0, "Guest sees no Mark complete")
+    page.wait_for_selector("h2:has-text('Reviews')")
+    say(page.locator("text=Post review").count() == 0, "Guest sees reviews but no review form")
+    page.click("text=Watch preview")
+    page.wait_for_selector("iframe")
+    say("dQw4w9WgXcQ" not in page.locator("iframe").get_attribute("src"), "Preview player uses the new video")
+    page.click("button:has-text('Enroll')")
+    page.wait_for_url("**/login")
+    say(True, "Guest pressing Enroll goes to login")
+
+    # Student
+    login(page, "student5@miniudemy.test")
+    say(page.locator("text=My Learning").count() == 1 and page.locator("text=Dashboard").count() == 0, "Student sees only student links")
+    page.goto(BASE + "/courses/4")
+    page.wait_for_selector("text=Curriculum")
+    page.click("button:has-text('Enroll')")
+    page.wait_for_selector("text=You are enrolled")
+    say(True, "Student enrols from the page")
+    say(page.locator("button:has-text('Mark complete')").first.is_disabled(), "Mark complete is disabled until the lesson is opened")
+    page.locator("button:has-text('Open')").nth(0).click()
+    page.wait_for_timeout(1100)
+    page.locator("button:has-text('Open')").nth(1).click()  # leaving lesson 1 sends pause
+    page.wait_for_timeout(1100)
+    second = page.locator("li", has=page.locator("text=Lesson 1.2"))
+    second.locator("button:has-text('Mark complete')").click()
+    page.wait_for_selector("button:has-text('Done')")
+    page.click("button:has-text('Post review')")
+    page.wait_for_selector("text=Complete at least 50%")
+    say(True, "Review below 50% shows the database's message")
+    complete_next(page)
+    complete_next(page)
+    label = page.locator("text=% done").first.inner_text()
+    say("50% done" in label, "Progress bar text after 3 of 6", label)
+    page.select_option("form select", "4")
+    page.fill("textarea", "Clear and practical.")
+    page.click("button:has-text('Post review')")
+    page.wait_for_selector("text=Thank you for your review")
+    say(page.locator("text=Clear and practical.").count() == 1, "Review posted at 50% and listed")
+    page.click("button:has-text('Edit')")
+    page.fill("textarea", "Clear, practical, well paced.")
+    page.click("button:has-text('Save changes')")
+    page.wait_for_selector("text=Review updated")
+    say(page.locator("text=Clear, practical, well paced.").count() == 1, "Review edited")
+    page.screenshot(path=SHOTS + "/ui_course.png", full_page=True)
+    while page.locator("button:has-text('Mark complete')").count():
+        complete_next(page)
+    page.wait_for_selector("text=Course completed")
+    say(True, "Completing all lessons shows the message")
+    page.click("text=My Learning")
+    page.wait_for_selector("h1:has-text('My Learning')")
+    page.wait_for_selector("strong")
+    say(page.locator("text=Next.js in Practice").count() == 1, "My Learning lists the course")
+    page.screenshot(path=SHOTS + "/ui_learning.png")
+    page.click("text=Log out")
+    page.wait_for_selector("text=Log in / Register")
+
+    # Instructor
+    login(page, "asha@miniudemy.test")
+    say(page.locator("text=Dashboard").count() == 1 and page.locator("text=My Learning").count() == 0, "Instructor sees Dashboard, not My Learning")
+    page.click("text=Dashboard")
+    page.wait_for_selector("h1:has-text('Instructor Dashboard')")
+    page.wait_for_selector("table tbody tr")
+    say(page.locator("table tbody tr").count() == 5, "Dashboard lists the instructor's 5 courses", str(page.locator("table tbody tr").count()))
+    page.screenshot(path=SHOTS + "/ui_instructor.png", full_page=True)
+    page.click("text=New course")
+    title = f"Query Tuning {STAMP}"
+    page.fill("input[placeholder=Title]", title)
+    page.fill("textarea[placeholder=Description]", "EXPLAIN plans and indexes.")
+    page.select_option("form select >> nth=0", index=1)
+    page.fill("input[placeholder='Module 1 title']", "Reading plans")
+    page.fill("input[placeholder='Lesson 1.1 title']", "EXPLAIN ANALYZE")
+    page.click("text=Add lesson")
+    page.fill("input[placeholder='Lesson 1.2 title']", "Choosing indexes")
+    page.click("text=Publish course")
+    page.wait_for_selector("text=Course published")
+    say(page.locator(f"text={title}").count() == 1, "Instructor publishes a course from the form")
+    row = page.locator("tr", has=page.locator(f"text={title}"))
+    row.locator("button:has-text('Preview')").click()
+    page.fill("input[placeholder^='https://']", "https://www.youtube.com/watch?v=zsjvFFKOm3c")
+    page.fill("input[placeholder^='Tags']", "sql, performance")
+    page.click("text=Save preview")
+    page.wait_for_selector("text=Preview saved to MongoDB")
+    say(True, "Instructor saves a preview")
+    page.click(f"text={title}")
+    page.wait_for_selector("text=Curriculum")
+    page.wait_for_selector("text=Watch preview")
+    say(page.locator("text=EXPLAIN ANALYZE").count() == 1, "New course page shows its lessons and preview")
+    page.goto(BASE + "/instructor")
+    page.wait_for_selector("table tbody tr")
+    page.locator("tr", has=page.locator(f"text={title}")).locator("button:has-text('Delete')").click()
+    page.wait_for_selector("text=Deleted")
+    page.wait_for_function("document.querySelectorAll('table tbody tr').length === 5")
+    say(True, "Instructor deletes the new course")
+    page.locator("tr", has=page.locator("text=SQL Fundamentals")).locator("button:has-text('Delete')").click()
+    page.wait_for_selector("text=cannot be deleted")
+    say(True, "Course with students cannot be deleted, with a clear message")
+    page.click("nav >> text=Insights")
+    page.wait_for_selector("h2:has-text('Stalled lessons')")
+    page.wait_for_function("document.querySelectorAll('table').length === 3")
+    say(True, "Insights page shows all three insights")
+    page.screenshot(path=SHOTS + "/ui_insights.png", full_page=True)
+    page.click("text=Log out")
+    page.wait_for_selector("text=Log in / Register")
+
+    # Admin
+    login(page, "admin@miniudemy.test")
+    page.click("nav >> text=Reports")
+    page.wait_for_selector("h2:has-text('R7.')")
+    page.wait_for_function("document.querySelectorAll('table').length >= 8")
+    say(page.locator("h2").count() == 8, "Reports page shows 7 SQL reports and watch time", str(page.locator("h2").count()))
+    page.click("text=show SQL >> nth=0")
+    say(page.locator("pre").count() == 1, "SQL for a report can be shown")
+    page.screenshot(path=SHOTS + "/ui_reports.png", full_page=True)
+    page.click("nav >> text=Users")
+    page.wait_for_selector("table tbody tr")
+    page.fill("input[placeholder^='Search']", "student6@")
+    page.click("button:has-text('Search')")
+    page.wait_for_function("document.querySelectorAll('table tbody tr').length === 1")
+    page.select_option("select[aria-label='Role for student6@miniudemy.test']", "instructor")
+    page.wait_for_selector("text=is now instructor")
+    say(True, "Admin changes a role")
+    page.select_option("select[aria-label='Role for student6@miniudemy.test']", "student")
+    page.wait_for_selector("text=is now student")
+    page.fill("input[placeholder^='Search']", "")
+    page.click("button:has-text('Search')")
+    page.wait_for_function("document.querySelectorAll('table tbody tr').length > 20")
+    page.screenshot(path=SHOTS + "/ui_users.png")
+    b.close()
+
+real = [e for e in errors if "401" not in e and "403" not in e and "404" not in e and "409" not in e]
+print("INFO browser errors (excluding expected 401/403/404/409):", real[:6] if real else "none")
+print(f"{sum(r['ok'] for r in results)}/{len(results)} passed")
+raise SystemExit(0 if all(r["ok"] for r in results) else 1)
